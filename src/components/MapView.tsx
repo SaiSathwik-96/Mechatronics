@@ -4,8 +4,8 @@ import { Icon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
+import { db } from '../lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { MapPin, Navigation } from 'lucide-react';
 
 const customIcon = new Icon({
@@ -78,7 +78,6 @@ function RoutingControl({ from, to }: { from: [number, number] | null; to: [numb
 }
 
 export function MapView() {
-  const { user } = useAuth();
   const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
   const [robotLocation, setRobotLocation] = useState<Coordinates | null>({
     latitude: 51.505,
@@ -93,21 +92,20 @@ export function MapView() {
   const [notifications, setNotifications] = useState<CrackNotification[]>([]);
   const [selectedCrackDetails, setSelectedCrackDetails] = useState<CrackNotification | null>(null);
   const [showRobotInput, setShowRobotInput] = useState(false);
+  const [showRouting, setShowRouting] = useState(false);
   const [tempRobotLat, setTempRobotLat] = useState(robotLocation?.latitude.toString() || '');
   const [tempRobotLng, setTempRobotLng] = useState(robotLocation?.longitude.toString() || '');
 
   const saveCoordinates = async (lat: number, lng: number, accuracy?: number) => {
-    if (!user) return;
-
-    const { error } = await supabase.from('gps_coordinates').insert({
-      user_id: user.id,
-      latitude: lat,
-      longitude: lng,
-      accuracy: accuracy,
-      timestamp: new Date().toISOString(),
-    });
-
-    if (error) {
+    try {
+      await addDoc(collection(db, 'gps_coordinates'), {
+        user_id: 'anonymous', // Placeholder for now
+        latitude: lat,
+        longitude: lng,
+        accuracy: accuracy ?? null,
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
       console.error('Error saving coordinates:', error);
     }
   };
@@ -470,6 +468,7 @@ export function MapView() {
                     setSelectedCrackId(notification.id);
                     setSelectedCrackDetails(notification);
                     setMapCenter([notification.latitude, notification.longitude]);
+                    setShowRouting(true);
                   }}
                   className={`w-full text-left rounded-lg p-3 border transition-all duration-150 ${
                     notification.severity === 'critical'
@@ -497,7 +496,10 @@ export function MapView() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold text-gray-800">Crack Details</h3>
               <button
-                onClick={() => setSelectedCrackDetails(null)}
+                onClick={() => {
+                  setSelectedCrackDetails(null);
+                  setShowRouting(false);
+                }}
                 className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
               >
                 ×
@@ -600,7 +602,10 @@ export function MapView() {
               Detected: {selectedCrackDetails.timestamp}
             </div>
             <button
-              onClick={() => setSelectedCrackDetails(null)}
+              onClick={() => {
+                setSelectedCrackDetails(null);
+                setShowRouting(false);
+              }}
               className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
             >
               Close
