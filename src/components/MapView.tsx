@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import 'leaflet-routing-machine/dist/leaflet-routing-machine.css';
 import { db } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { MapPin, Navigation } from 'lucide-react';
 
 const customIcon = new Icon({
@@ -41,6 +41,13 @@ interface CrackNotification {
   latitude: number;
   longitude: number;
   depth?: number; // in millimeters
+}
+
+interface LiveStatus {
+  battery: number;
+  latitude: number;
+  longitude: number;
+  timestamp?: string;
 }
 
 function MapUpdater({ center }: { center: [number, number] }) {
@@ -95,6 +102,7 @@ export function MapView() {
   const [showRouting, setShowRouting] = useState(false);
   const [tempRobotLat, setTempRobotLat] = useState(robotLocation?.latitude.toString() || '');
   const [tempRobotLng, setTempRobotLng] = useState(robotLocation?.longitude.toString() || '');
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
 
   const saveCoordinates = async (lat: number, lng: number, accuracy?: number) => {
     try {
@@ -107,6 +115,18 @@ export function MapView() {
       });
     } catch (error) {
       console.error('Error saving coordinates:', error);
+    }
+  };
+
+  const saveCrack = async (lat: number, lng: number) => {
+    try {
+      await addDoc(collection(db, 'Cracks'), {
+        latitude: lat,
+        longitude: lng,
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error saving crack:', error);
     }
   };
 
@@ -125,6 +145,7 @@ export function MapView() {
         depth,
       };
       setNotifications((prev) => [newAlert, ...prev].slice(0, 10));
+      saveCrack(lat, lng); // Save to Firebase
     }
   };
 
@@ -138,6 +159,20 @@ export function MapView() {
     setRobotLocation(newRobotLoc);
     setTempRobotLat(lat.toString());
     setTempRobotLng(lng.toString());
+    saveLiveStatus(lat, lng, liveStatus?.battery || 100); // Save to Firebase
+  };
+
+  const saveLiveStatus = async (lat: number, lng: number, battery: number) => {
+    try {
+      await addDoc(collection(db, 'LiveStatus'), {
+        latitude: lat,
+        longitude: lng,
+        battery: battery,
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error('Error saving live status:', error);
+    }
   };
 
   const getCurrentLocation = () => {
@@ -225,6 +260,25 @@ export function MapView() {
       setMapCenter([coordinates.latitude, coordinates.longitude]);
     }
   }, [coordinates, selectedCrackDetails]);
+
+  // Listen to LiveStatus for real-time updates
+  useEffect(() => {
+    const q = query(collection(db, 'LiveStatus'), orderBy('timestamp', 'desc'), limit(1));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      querySnapshot.forEach((doc) => {
+        const data = doc.data() as LiveStatus;
+        setLiveStatus(data);
+        setRobotLocation({
+          latitude: data.latitude,
+          longitude: data.longitude,
+          accuracy: 3,
+          timestamp: new Date().toISOString(),
+        });
+        setMapCenter([data.latitude, data.longitude]);
+      });
+    });
+    return unsubscribe;
+  }, []);
 
   return (
     <div className="h-screen bg-gray-100 p-4 flex items-center justify-center overflow-auto">
@@ -381,6 +435,12 @@ export function MapView() {
                             <p><span className="font-semibold">Longitude:</span> {robotLocation.longitude.toFixed(6)}</p>
                             {robotLocation.accuracy && (
                               <p><span className="font-semibold">Accuracy:</span> {robotLocation.accuracy.toFixed(0)}m</p>
+                            )}
+                            {liveStatus && (
+                              <>
+                                <p><span className="font-semibold">Battery:</span> {liveStatus.battery}%</p>
+                                <p><span className="font-semibold">Status:</span> {liveStatus.battery > 20 ? 'Active' : 'Low Battery'}</p>
+                              </>
                             )}
                           </div>
                           <p className="text-xs text-gray-500 mt-2 border-t border-blue-200 pt-1">
